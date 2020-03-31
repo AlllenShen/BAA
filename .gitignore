@@ -1,0 +1,7 @@
+.vscode/
+.idea/
+data/
+env/
+env-cpu/
+process_output/
+models/

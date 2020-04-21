@@ -3,8 +3,12 @@ import random
 import math
 import json
 import pprint
+try:
+    import data_augment
+except ModuleNotFoundError:
+    from keras_faster_rcnn import data_augment
 
-def get_data():
+def get_data(C, augment = False):
     '''
     将label数据转换成和demo一样的格式
     {
@@ -20,11 +24,21 @@ def get_data():
     DATA_PATH = os.path.abspath('data')
     LABEL_PATH = os.path.join(DATA_PATH, 'labels')
     IMG_PATH = os.path.join(DATA_PATH, 'raw')
-    TRAIN_SPLIT = 0.6
-    VAL_SPLIT = 0.2
+    TRAIN_SPLIT = 0.8
+    VAL_SPLIT = 0.1
+    AUGMENT_NUM = 4
 
-    classes_count = {}  # 一个字典，key为对应类别名称，value对应为类别所对应的样本（标注框）个数
-    classes_mapping = {}  # 一个字典数据结构，key为对应类别名称，value为对应类别的一个标识index
+    classes_count = {
+        'wrist': 0,
+        'near': 0,
+        'far': 0,
+    }  # 一个字典，key为对应类别名称，value对应为类别所对应的样本（标注框）个数
+    # 分多次训练，分类mapping要固定
+    classes_mapping = {
+        'wrist': 0,
+        'near': 1,
+        'far': 2,
+    }  # 一个字典数据结构，key为对应类别名称，value为对应类别的一个标识index
     img_data = []
 
     label_files = os.listdir(LABEL_PATH)
@@ -41,6 +55,12 @@ def get_data():
         bboxes = []
         for shape in data['shapes']:
             classes_name = shape['label']
+            # 不训练小标注框
+            # if classes_name != 'wrist':
+            #     continue
+            # 小标注框
+            # if classes_name == 'wrist':
+            #     continue
             bboxes.append({
                 'x1': shape['points'][0][0],
                 'y1': shape['points'][0][1],
@@ -52,8 +72,8 @@ def get_data():
                 classes_count[classes_name] += 1
             else:
                 classes_count[classes_name] = 1
-            if classes_name not in classes_mapping:
-                classes_mapping[classes_name] = len(classes_mapping)
+            # if classes_name not in classes_mapping:
+            #     classes_mapping[classes_name] = len(classes_mapping)
         img_name = file.split(os.sep)[-1].replace('json', 'jpg')
         return {
             'width': data['imageWidth'],
@@ -63,18 +83,49 @@ def get_data():
             'imageset': type
         }
     for file in train_files:
-        img_data.append(handle_json(os.path.join(LABEL_PATH, file), 'train'))
+        if augment:
+            for _ in range(AUGMENT_NUM):
+                img_aug, img = data_augment.augment(
+                    handle_json(os.path.join(LABEL_PATH, file), 'train'),
+                    C,
+                    augment
+                )
+                img_data.append(img_aug)
+        else:
+            img_data.append(handle_json(os.path.join(LABEL_PATH, file), 'train'))
     for file in val_files:
-        img_data.append(handle_json(os.path.join(LABEL_PATH, file), 'val'))
+        if augment:
+            for _ in range(AUGMENT_NUM):
+                img_aug, img = data_augment.augment(
+                    handle_json(os.path.join(LABEL_PATH, file), 'val'),
+                    C,
+                    augment
+                )
+                img_data.append(img_aug)
+        else:
+            img_data.append(handle_json(os.path.join(LABEL_PATH, file), 'val'))
     for file in test_files:
-        img_data.append(handle_json(os.path.join(LABEL_PATH, file), 'test'))
+        if augment:
+            for _ in range(AUGMENT_NUM):
+                img_aug, img = data_augment.augment(
+                    handle_json(os.path.join(LABEL_PATH, file), 'test'),
+                    C,
+                    augment
+                )
+                img_data.append(img_aug)
+        else:
+            img_data.append(handle_json(os.path.join(LABEL_PATH, file), 'test'))
     return img_data, classes_count, classes_mapping
 
 
 if __name__ == "__main__":
-    image_data, classes_count, classes_mapping = get_data()
+    import config
+
+    C = config.Config()  #相关配置信息
+    image_data, classes_count, classes_mapping = get_data(C)
     print("数据集大小：", len(image_data))
-    print("类别个数：", len(classes_count))
+    print("类别个数：", len(classes_mapping))
     print("类别种类：", classes_count.keys())
-    print("打印其中一条样本数据：")
-    pprint.pprint(image_data[0])
+    print("各类别样本数：", classes_count)
+    # print("打印其中一条样本数据：")
+    # pprint.pprint(image_data[0])

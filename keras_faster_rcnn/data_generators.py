@@ -9,6 +9,40 @@ try:
     import data_augment
 except ModuleNotFoundError:
     from keras_faster_rcnn import data_augment
+try:
+    from keras_faster_rcnn.utils import *
+except:
+    from utils import *
+
+PROCESS_OUTPUT_DIR = 'process_output/'
+LOG_PROCESS_IMG = True
+dump_process_img = lambda name, img: cv2.imwrite(PROCESS_OUTPUT_DIR + name + '.jpg', img) if LOG_PROCESS_IMG else ''
+
+def image_Preprocessing(img, C):
+    '''
+    图片预处理
+    :param img:
+    :param C:
+    :return:
+    '''
+    height, width, _ = img.shape
+    if width < height:
+        ratio = float(C.im_size) / width
+        new_width = C.im_size
+        new_height = int(height * ratio)
+    else:
+        ratio = float(C.im_size) / height
+        new_height = C.im_size
+        new_width = int(width * ratio)
+    x_img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
+    return x_img
+
+def draw_rect(img, a, b, show=True):
+    cv2.rectangle(img, (int(a[0]), int(a[1])), (int(b[0]), int(b[1])), (0 , 255, 0), 2)
+    if show:
+        cv2.namedWindow('anchor', cv2.WINDOW_NORMAL)
+        cv2.imshow('anchor', img)
+        cv2.waitKey(0)
 
 def get_new_img_size(width, height, img_min_size=600):
     if width <= height:
@@ -70,6 +104,7 @@ def getdata_for_rpn(config, img_data, width, heigth, resized_width, resized_heig
     anchor_sizes = config.anchor_box_scales   #anchor 三种尺寸
     anchor_ratios = config.anchor_box_ratios  # anchor 三种宽高比
     num_anchors = len(anchor_sizes) * len(anchor_ratios)  # 每一个滑动窗口所对应的anchor个数，也就是论文中的k值
+    img = image_Preprocessing(cv2.imread(img_data['filepath']), config)
 
     #计算出经过base Net后提取出来的featurmap图像尺寸
     output_width = int(resized_width / 16)
@@ -107,14 +142,22 @@ def getdata_for_rpn(config, img_data, width, heigth, resized_width, resized_heig
     best_dx_for_bbox = np.zeros((num_bboxes, 4)).astype(np.float32)
 
     gta = np.zeros((num_bboxes, 4))  # 用来存放经过缩放后的标注框
+
+    anchor_count = 0
     # 因为之前图片进行了缩放，所以需要将对应的标注框做对应调整
     for bbox_num, bbox in enumerate(img_data["bboxes"]):
+        # img = cv2.imread(img_data['filepath'])
+        # cv2.rectangle(img, (int(bbox["x1"]), int(bbox["y1"])), (int(bbox["x2"]), int(bbox["y2"])), (0, 255, 0), 2)
+        # cv2.namedWindow('img', cv2.WINDOW_NORMAL)
+        # cv2.imshow('img', img)
+        # cv2.waitKey(0)
         gta[bbox_num, 0] = bbox["x1"] * (resized_width / float(width))
         gta[bbox_num, 1] = bbox["x2"] * (resized_width / float(width))
         gta[bbox_num, 2] = bbox["y1"] * (resized_height / float(heigth))
         gta[bbox_num, 3] = bbox["y2"] * (resized_height / float(heigth))
-
-
+        # print(abs(int(gta[bbox_num, 0] - gta[bbox_num, 1])), abs(int(gta[bbox_num, 2] - gta[bbox_num, 3])))
+        # draw_rect(img, (gta[bbox_num, 0], gta[bbox_num, 2]), (gta[bbox_num, 1], gta[bbox_num, 3]))
+    # print('---------------')
     #遍历feature map上的每一个像素点
     for ix in range(output_width):
         for iy in range(output_height):
@@ -131,7 +174,8 @@ def getdata_for_rpn(config, img_data, width, heigth, resized_width, resized_heig
                     x1_anc = downscale * (ix + 0.5) - anchor_x / 2
                     x2_anc = downscale * (ix + 0.5) + anchor_x / 2
                     # 去掉那些跨过图像边界的框
-                    if x1_anc<0 or x2_anc > resized_width:
+                    if x1_anc < 0 or x2_anc > resized_width:
+                        # print(x1_anc, x2_anc)
                         continue
 
                     # 获得当前anchor在原图上的Y坐标位置
@@ -155,7 +199,10 @@ def getdata_for_rpn(config, img_data, width, heigth, resized_width, resized_heig
                         # 计算当前anchor与当前真实标注框的iou值
                         curr_iou = iou([gta[bbox_num, 0], gta[bbox_num, 2], gta[bbox_num, 1], gta[bbox_num, 3]],
                                        [x1_anc, y1_anc, x2_anc, y2_anc])
-
+                        if curr_iou > 0.6:
+                            # draw_rect(img, (x1_anc, y1_anc), (x2_anc, y2_anc))
+                            anchor_count += 1
+                            # print(curr_iou * 10, '{}/{}'.format(anchor_count, output_width * output_height * 9 ))
                         #根据iou值，判断当前anchor是否为正样本。
                         # 如果是，则计算此anchor(正样本)到ground - truth（真实检测框）的对应4个平移缩放参数。
                         # 判断一个anchor是否为正样本的两个条件为：
@@ -213,6 +260,7 @@ def getdata_for_rpn(config, img_data, width, heigth, resized_width, resized_heig
     # 我们需要确保每一个真实标注框都有至少一个对应的正样本（anchor）
     for idx in range(num_anchors_for_bbox.shape[0]):#遍历所有真实标注框，也就是所有ground truth
         if num_anchors_for_bbox[idx] == 0:  #如果当前真实标注框没有所对应的anchor
+            # print(best_anchor_for_bbox[idx, 0])
             if best_anchor_for_bbox[idx, 0] == -1: #如果当前真实标注框没有与任何anchor都无交集，也就是说iou都等于0，则直接忽略掉
                 continue
             y_is_box_valid[best_anchor_for_bbox[idx, 0], best_anchor_for_bbox[idx, 1],
@@ -249,14 +297,15 @@ def getdata_for_rpn(config, img_data, width, heigth, resized_width, resized_heig
     num_pos = len(pos_locs[0])  #正样本个数
 
     # 随机采样256个样本作为一个mini-batch,并且最多保持正负样本比例1:1,如果正样本个数不够，用负样本填充
-    mini_batch = 8
-    if len(pos_locs[0]) > mini_batch / 2:  #判断正样本个数是否多于128，如果是，则从所有正样本中随机采用128个
+    mini_batch = 32
+    # if len(pos_locs[0]) > mini_batch / 2:  #判断正样本个数是否多于128，如果是，则从所有正样本中随机采用128个
+    if len(pos_locs[0]) > mini_batch:  #判断正样本个数是否多于128，如果是，则从所有正样本中随机采用128个
         # 注意这块，是从所有正例的下标中留下128个，选取出其他剩余的，将对应的y_is_box_valid设置为0，
         # 也就是说选取出来的正例样本就是丢弃的， 不进行训练的样本，剩余的128个即为实际的正例样本
         val_locs = random.sample(range(num_pos), int(num_pos - mini_batch / 2))
         y_is_box_valid[0, pos_locs[0][val_locs], pos_locs[1][val_locs], pos_locs[2][val_locs]] = 0
 
-        num_pos = mini_batch / 2
+        num_pos = mini_batch
 
     # 正样本选取完毕后，开始选取负例样本，同样的思路，随机选取出不需要的负样本，将对应的y_is_box_valid设置为0，
     # 剩余的正好和正样本组合成 256个样本
@@ -302,34 +351,20 @@ def get_anchor_data_gt(img_datas, class_count, C, mode="train"):
             # try:
             #数据增强
             if mode == "train":
-                img_data_aug, x_img = data_augment.augment(img_data, C, augment=True)
+                img_data_aug, x_img = data_augment.augment(img_data, C, augment=False)
             else:
                 img_data_aug, x_img = data_augment.augment(img_data, C, augment=False)
-
             #确保图像尺寸不发生改变
             (width, height) = (img_data_aug['width'], img_data_aug['height'])
             (rows, cols, _) = x_img.shape
             assert cols == width
             assert rows == height
-
             #将图像的短边缩放到600尺寸
             (resized_width, resized_height) = get_new_img_size(width, height, C.im_size)
             x_img = cv2.resize(x_img, (resized_width, resized_height), interpolation=cv2.INTER_CUBIC)
-
-            x_img = cv2.cvtColor(x_img, cv2.COLOR_BGR2RGB)
-            x_img = x_img.astype(np.float32)
-            # 不清楚这里img_channel_mean的作用，所以先计算再去灰度
-            x_img[:, :, 0] -= C.img_channel_mean[0]
-            x_img[:, :, 1] -= C.img_channel_mean[1]
-            x_img[:, :, 2] -= C.img_channel_mean[2]
-            x_img /= C.img_scaling_factor
-            print('image shape:', x_img.shape)
-            x_img = cv2.cvtColor(x_img, cv2.COLOR_RGB2GRAY)
-            print('image shape:', x_img.shape)
-            x_img = np.expand_dims(x_img, axis=2)
-            x_img = np.expand_dims(x_img, axis=0)
-            print('image shape:', x_img.shape)
-
+            dump_process_img('resized', x_img)
+            # show_rpn_input_img(x_img)
+            x_img = handleImg(x_img, C)
             y_rpn_cls, y_rpn_regr = getdata_for_rpn(C, img_data_aug, width, height, resized_width, resized_height)
 
             y_rpn_regr[:,:, :, y_rpn_regr.shape[1] // 2:] *= C.std_scaling
@@ -339,12 +374,31 @@ def get_anchor_data_gt(img_datas, class_count, C, mode="train"):
             #     print(e)
             #     continue
 
+def handleImg(img, C):
+    """
+    输入BGR图片，处理为模型输入的灰度图，shape (1, None, None, 1)
+    """
+    dump_process_img('before-meaned', img)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img = img.astype(np.float32)
+    # img[:, :, 0] -= C.img_channel_mean[0]
+    # img[:, :, 1] -= C.img_channel_mean[1]
+    # img[:, :, 2] -= C.img_channel_mean[2]
+    dump_process_img('meaned', img)
+    img /= C.img_scaling_factor
+    img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    dump_process_img('gray', img)
+    img = np.expand_dims(img, axis=2)
+    img = np.expand_dims(img, axis=0)
+    return img
+
 if __name__ == "__main__":
     from data_parser import get_data
     import config
 
-    all_imgs, classes_count, class_mapping = get_data()
     C = config.Config()  #相关配置信息
+    all_imgs, classes_count, class_mapping = get_data(C)
     C.class_mapping = class_mapping
     data_gen_train = get_anchor_data_gt(all_imgs, classes_count, C, mode='train')
+    # for _ in range(20):
     next(data_gen_train)

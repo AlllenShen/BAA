@@ -43,7 +43,7 @@ def augment(img_data, config, augment = True):
 
         if config.rot_90:
             angle = np.random.choice([0,90,180,270],1)[0]
-            print("angle==",angle)
+            # print("angle==",angle)
             if angle == 270:   #旋转270度
                 img = np.transpose(img, (1,0,2))
                 img = cv2.flip(img, 0)

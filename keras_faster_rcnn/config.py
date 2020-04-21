@@ -3,7 +3,7 @@ class Config:
 
     def __init__(self):
 
-        self.verbose = True   #训练过程中是否打印信息
+        self.verbose = False   #训练过程中是否打印信息
 
         # 基础CNN模型
         self.network = 'VGG16'
@@ -14,11 +14,13 @@ class Config:
         self.rot_90 = False
 
         # anchor box scales
-        self.anchor_box_scales = [128, 256, 512]
+        # self.anchor_box_scales = [64, 128, 256] # 手掌区域
+        # self.anchor_box_scales = [40, 60, 80] # 指骨区域
+        self.anchor_box_scales = [48, 60, 128] 
 
         # anchor box ratios
-        self.anchor_box_ratios = [[1, 1], [1./math.sqrt(2), 2./math.sqrt(2)], [2./math.sqrt(2), 1./math.sqrt(2)]]
-        # self.anchor_box_ratios = [[1, 1], [1, 2], [2, 1]]
+        # self.anchor_box_ratios = [[1, 1], [1./math.sqrt(2), 2./math.sqrt(2)], [2./math.sqrt(2), 1./math.sqrt(2)]]
+        self.anchor_box_ratios = [[1, 1], [1, 2], [2, 1]] # 小标注框用这个命中更多
         # 需要调整的图片最小边的大小
         self.im_size = 600
 
@@ -41,7 +43,7 @@ class Config:
 
         # overlaps for RPN
         self.rpn_min_overlap = 0.3
-        self.rpn_max_overlap = 0.7
+        self.rpn_max_overlap = 0.5
 
         # overlaps for classifier ROIs
         self.classifier_min_overlap = 0.1
@@ -51,4 +53,6 @@ class Config:
         self.class_mapping = None
         self.base_net_weights = "models/vgg16_weights_tf_dim_ordering_tf_kernels.h5"
 
-        self.model_path = 'models/model_frcnn.vgg.hdf5'
+        # self.model_path = 'models/wrist_frcnn.vgg.hdf5'
+        # self.model_path = 'models/finger_frcnn.vgg.hdf5'
+        self.model_path = 'models/model1_frcnn.vgg.hdf5'

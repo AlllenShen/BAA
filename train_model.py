@@ -1,5 +1,6 @@
 from keras_faster_rcnn import config, data_generators, data_augment, losses, net_model, roi_helper, RoiPoolingConv
 from keras_faster_rcnn.data_parser import get_data
+from keras_faster_rcnn.utils import *
 from keras.optimizers import Adam, SGD, RMSprop
 from keras.utils import generic_utils
 from keras.layers import Input
@@ -9,8 +10,17 @@ import numpy as np
 import time
 import pprint
 import pickle
+import sys
+import os
+
+if '-s' in sys.argv:
+    print('the computer will be shutdow after training finished.')
+
+data_generators.LOG_PROCESS_IMG = False
 #获取原始数据集
-all_imgs, classes_count, class_mapping = get_data()
+
+C = config.Config()  #相关配置信息
+all_imgs, classes_count, class_mapping = get_data(C, True)
 if 'bg' not in classes_count:
     classes_count['bg'] = 0
     class_mapping['bg'] = len(class_mapping)
@@ -27,7 +37,6 @@ print('训练样本个数 {}'.format(len(train_imgs)))
 print('验证样本个数 {}'.format(len(val_imgs)))
 print('测试样本个数 {}'.format(len(test_imgs)))
 
-C = config.Config()  #相关配置信息
 C.class_mapping = class_mapping
 config_output_filename = "config/config.pickle"
 with open(config_output_filename, "wb") as config_f:
@@ -85,9 +94,9 @@ model_classifier.compile(optimizer=optimizer_classifier, loss=[losses.final_cls_
 model_all.compile(optimizer='sgd', loss='mae')
 
 # epoch_length = 1000  #每1000轮训练，记录一次平均loss
-epoch_length = 1  #每1000轮训练，记录一次平均loss
+epoch_length = 2  #每1000轮训练，记录一次平均loss
 # num_epochs = 2000
-num_epochs = 5
+num_epochs = 200
 iter_num = 0
 train_step = 0  #记录训练次数
 
@@ -99,6 +108,7 @@ start_time = time.time()
 best_loss = np.Inf
 
 print('Starting training')
+count = 0
 for epoch_num in range(num_epochs):
     progbar = generic_utils.Progbar(epoch_length)
     print('Epoch {}/{}'.format(epoch_num + 1, num_epochs))
@@ -115,13 +125,19 @@ for epoch_num in range(num_epochs):
         X, Y, img_data = next(data_gen_train)  #通过构造的迭代器，获得一条数据
         # print(X.shape)
         # print(Y[0].shape, Y[1].shape)
+        # show_rpn_input_img(X)
+        dump_rpn_input_img(X, count)
+        count += 1
         loss_rpn = model_rpn.train_on_batch(X, Y)  #训练basenet 与 RPN网络
 
         P_rpn = model_rpn.predict_on_batch(X)  #获得RPN网络的输出
 
+        # 验证
+        X_t, Y_t, img_data_t = next(data_gen_val)
+        E_rpn = model_rpn.test_on_batch(X_t, Y_t)
+
         #通过rpn网络的输出，找出对应的roi
-        R = roi_helper.rpn_to_roi(P_rpn[0], P_rpn[1], C, use_regr=True, overlap_thresh=0.7,
-                                   max_boxes=300)
+        R = roi_helper.rpn_to_roi(P_rpn[0], P_rpn[1], C, use_regr=True, overlap_thresh=0.7, max_boxes=300)
         #生成roipooing层的输入数据以及最终分类层的训练数据Y值以及最终回归层的训练数据Y值
         X2, Y1, Y2, IouS = roi_helper.calc_roi(R, img_data, C, class_mapping)
 
@@ -170,9 +186,9 @@ for epoch_num in range(num_epochs):
             start_time = time.time()
 
             if curr_loss < best_loss:
-                if C.verbose:
-                    print('Total loss decreased from {} to {}, saving weights'.format(best_loss,curr_loss))
+                print('Total loss decreased from {} to {}, saving weights'.format(best_loss,curr_loss))
                 best_loss = curr_loss
                 model_all.save_weights(C.model_path)
 
-            break
+if '-s' in sys.argv:
+    os.system('shutdown -h -f -t 60')

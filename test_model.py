@@ -4,7 +4,8 @@ import numpy as np
 import sys
 import pickle
 import time
-from keras_faster_rcnn import config, roi_helper, net_model
+from keras_faster_rcnn import config, roi_helper, net_model, data_generators
+from keras_faster_rcnn.utils import *
 from keras import backend as K
 from keras.layers import Input
 from keras.models import Model
@@ -61,6 +62,7 @@ classes = {}
 bbox_threshold = 0.8
 visualise = True
 
+data_generators.LOG_PROCESS_IMG = False
 
 def image_Preprocessing(img, C):
     '''
@@ -78,20 +80,14 @@ def image_Preprocessing(img, C):
         ratio = float(C.im_size) / height
         new_height = C.im_size
         new_width = int(width * ratio)
-    img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
-    x_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    x_img = x_img.astype(np.float32)
-    x_img[:, :, 0] -= C.img_channel_mean[0]
-    x_img[:, :, 1] -= C.img_channel_mean[1]
-    x_img[:, :, 2] -= C.img_channel_mean[2]
-    x_img /= C.img_scaling_factor
-    x_img = cv2.cvtColor(x_img, cv2.COLOR_RGB2GRAY)
-    x_img = np.expand_dims(x_img, axis=2)
-    x_img = np.expand_dims(x_img, axis=0)
+    x_img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
+    x_img = data_generators.handleImg(x_img, C)
     return x_img, ratio
 
-
 for idx, img_name in enumerate(sorted(os.listdir(test_img_path))):  #遍历所有测试文件
+    P_bg_min = 1
+    max_posibility = 0
+    max_posibility_index = 0
     if not img_name.lower().endswith(('.bmp', '.jpeg', '.jpg', '.png', '.tif', '.tiff')):
         continue
     print("test image name:{}".format(img_name))
@@ -107,7 +103,7 @@ for idx, img_name in enumerate(sorted(os.listdir(test_img_path))):  #遍历所�
     [Y1, Y2, feature_map] = model_rpn.predict(X)
 
     #根据RPN网络结果，获得对应所需要的ROI
-    Rois = roi_helper.rpn_to_roi(Y1, Y2, C, max_boxes=320, overlap_thresh=0.7)
+    Rois = roi_helper.rpn_to_roi(Y1, Y2, C, max_boxes=320, overlap_thresh=0.8)
 
     #(x1,y1,x2,y2) to (x,y,w,h)
     Rois[:, 2] -= Rois[:, 0]
@@ -135,6 +131,16 @@ for idx, img_name in enumerate(sorted(os.listdir(test_img_path))):  #遍历所�
         for ii in range(P_cls.shape[1]):  #遍历每一个roi对应的预测类别
             #过滤调那些分类概率值不高 以及 负样本
             if np.max(P_cls[0, ii, :]) < bbox_threshold or np.argmax(P_cls[0, ii, :]) == (P_cls.shape[2]-1):
+                P_bg = P_cls[0, ii, P_cls.shape[2]-1]
+                if P_bg_min > P_bg:
+                    P_bg_min = P_bg
+
+                posibility = np.max(P_cls[0, ii, :-1])
+                idx = np.argmax(P_cls[0, ii, :-1])
+                if posibility > max_posibility:
+                    max_posibility = posibility
+                    max_posibility_index = idx
+                
                 continue
             #获得当前roi预测出的类别
             cls_num =np.argmax(P_cls[0,ii, :])
@@ -155,6 +161,11 @@ for idx, img_name in enumerate(sorted(os.listdir(test_img_path))):  #遍历所�
             bbox_for_img = [C.rpn_stride*x, C.rpn_stride*y, C.rpn_stride*(x+w), C.rpn_stride*(y+h)]
             bboxes[cls_name].append(bbox_for_img)
             probs[cls_name].append(cls_num)
+        # print(P_bg_min)
+        print('max possibility: {} index {}'.format(
+            np.max(P_cls[0, ii, :-1]),
+            np.argmax(P_cls[0, ii, :-1])
+        ))
 
     all_dets = []
 
@@ -170,8 +181,8 @@ for idx, img_name in enumerate(sorted(os.listdir(test_img_path))):  #遍历所�
             real_x2 = int(round(x2 // ratio))
             real_y2 = int(round(y2 // ratio))
 
-            cv2.rectangle(img, (real_x1, real_y1), (real_x2, real_y2),
-                          (class_to_color[key][0], class_to_color[key][1], class_to_color[key][2]), 2)
+            cv2.rectangle(img, int_tuple(real_x1, real_y1), int_tuple(real_x2, real_y2),
+                          int_tuple(class_to_color[key][0], class_to_color[key][1], class_to_color[key][2]), 2)
 
             textLabel = "{}:{}".format(key, int(100 * new_probs[jk]))
             all_dets.append((key, 100 * new_probs[jk]))
@@ -179,17 +190,18 @@ for idx, img_name in enumerate(sorted(os.listdir(test_img_path))):  #遍历所�
             retval, baseLine = cv2.getTextSize(textLabel, cv2.FONT_HERSHEY_COMPLEX, 1, 1)
             textOrg = (real_x1, real_y1-0)
 
-            cv2.rectangle(img, (textOrg[0] - 5, textOrg[1] + baseLine - 5),
-                          (textOrg[0] + retval[0] + 5, textOrg[1] - retval[1] - 5), (0, 0, 0), 2)
-            cv2.rectangle(img, (textOrg[0] - 5, textOrg[1] + baseLine - 5),
-                          (textOrg[0] + retval[0] + 5, textOrg[1] - retval[1] - 5), (255, 255, 255), -1)
+            cv2.rectangle(img, int_tuple(textOrg[0] - 5, textOrg[1] + baseLine - 5),
+                          int_tuple(textOrg[0] + retval[0] + 5, textOrg[1] - retval[1] - 5), (0, 0, 0), 2)
+            cv2.rectangle(img, int_tuple(textOrg[0] - 5, textOrg[1] + baseLine - 5),
+                          int_tuple(textOrg[0] + retval[0] + 5, textOrg[1] - retval[1] - 5), (255, 255, 255), -1)
             cv2.putText(img, textLabel, textOrg, cv2.FONT_HERSHEY_DUPLEX, 1, (0, 0, 0), 1)
 
     print('Elapsed time = {}'.format(time.time() - st))
     print(all_dets)
+    # cv2.namedWindow('img', cv2.WINDOW_NORMAL)
     # cv2.imshow('img', img)
     # cv2.waitKey(0)
-    cv2.imwrite('./results_imgs/{}.png'.format(idx), img)
+    cv2.imwrite('results_imgs/{}.png'.format(idx), img)
 
 
 
